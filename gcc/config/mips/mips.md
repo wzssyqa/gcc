@@ -312,6 +312,10 @@
 ;; "11" specifies MEMMODEL_ACQUIRE.
 (define_attr "sync_memmodel" "" (const_int 10))
 
+;; Performance ratio. Used by mips_insn_cost: it returns insn_count*perf_ratio*4.
+;; Add this attr to the slow INSNs.
+(define_attr "perf_ratio" "" (const_int 1))
+
 ;; Accumulator operand for madd patterns.
 (define_attr "accum_in" "none,0,1,2,3,4,5" (const_string "none"))
 

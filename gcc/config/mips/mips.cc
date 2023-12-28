@@ -4170,6 +4170,18 @@ mips_set_reg_reg_cost (machine_mode mode)
     }
 }
 
+/* Implement TARGET_INSN_COSTS.  */
+
+static int
+mips_insn_cost (rtx_insn *x, bool speed ATTRIBUTE_UNUSED)
+{
+  if (GET_CODE (PATTERN (x)) != SET)
+    return pattern_cost (PATTERN (x), speed);
+  return get_attr_insn_count (x)
+	  * get_attr_perf_ratio (x)
+	  * 4;
+}
+
 /* Implement TARGET_RTX_COSTS.  */
 
 static bool
@@ -23052,6 +23064,8 @@ mips_bit_clear_p (enum machine_mode mode, unsigned HOST_WIDE_INT m)
 #define TARGET_RTX_COSTS mips_rtx_costs
 #undef TARGET_ADDRESS_COST
 #define TARGET_ADDRESS_COST mips_address_cost
+#undef  TARGET_INSN_COST
+#define TARGET_INSN_COST mips_insn_cost
 
 #undef TARGET_NO_SPECULATION_IN_DELAY_SLOTS_P
 #define TARGET_NO_SPECULATION_IN_DELAY_SLOTS_P mips_no_speculation_in_delay_slots_p
