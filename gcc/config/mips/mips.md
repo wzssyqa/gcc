@@ -1435,6 +1435,17 @@
   [(set_attr "alu_type" "add")
    (set_attr "mode" "SI")])
 
+(define_insn "*insv_extended"
+  [(set (match_operand:DI 0 "register_operand" "=d")
+	(sign_extend:DI
+	     (ior:SI (and:SI (subreg:SI (match_dup 0) 0)
+                    (const_int 16777215))
+                (ashift:SI (subreg:SI (match_operand:QI 1 "register_operand" "d") 0)
+                    (const_int 24)))))]
+  "TARGET_64BIT && !TARGET_MIPS16 && ISA_HAS_EXT_INS"
+  "ins\t%0,%1,24,8"
+  [(set_attr "mode" "SI")])
+
 ;; Split this insn so that the addiu splitters can have a crack at it.
 ;; Use a conservative length estimate until the split.
 (define_insn_and_split "*addsi3_extended_mips16"
@@ -6082,8 +6093,8 @@
   [(set (pc)
 	(if_then_else
 	 (match_operator 1 "order_operator"
-			 [(match_operand:HGPR 2 "register_operand" "d,d")
-			  (match_operand:HGPR 3 "reg_or_0_operand" "J,d")])
+			 [(match_operand:GPR 2 "register_operand" "d,d")
+			  (match_operand:GPR 3 "reg_or_0_operand" "J,d")])
 	 (label_ref (match_operand 0 "" ""))
 	 (pc)))]
   "!TARGET_MIPS16"
