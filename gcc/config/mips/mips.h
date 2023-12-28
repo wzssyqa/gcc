@@ -1757,9 +1757,7 @@ FP_ASM_SPEC "\
 
 /* When in 64-bit mode, move insns will sign extend SImode and CCmode
    moves.  All other references are zero extended.  */
-#define LOAD_EXTEND_OP(MODE) \
-  (TARGET_64BIT && ((MODE) == SImode || (MODE) == CCmode) \
-   ? SIGN_EXTEND : ZERO_EXTEND)
+#define LOAD_EXTEND_OP(MODE) ZERO_EXTEND
 
 /* Define this macro if it is advisable to hold scalars in registers
    in a wider mode than that declared by the program.  In such cases,
@@ -1773,7 +1771,10 @@ FP_ASM_SPEC "\
     {                                           \
       if ((MODE) == SImode)                     \
         (UNSIGNEDP) = 0;                        \
-      (MODE) = Pmode;                           \
+      if (TARGET_64BIT)                         \
+        (MODE) = DImode;                        \
+      else                                      \
+        (MODE) = Pmode;                         \
     }
 
 /* Pmode is always the same as ptr_mode, but not always the same as word_mode.

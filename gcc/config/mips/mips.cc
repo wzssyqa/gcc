@@ -5658,7 +5658,10 @@ mips_emit_compare (enum rtx_code *code, rtx *op0, rtx *op1, bool need_eq_ne_p)
   if (GET_MODE_CLASS (GET_MODE (*op0)) == MODE_INT)
     {
       if (!need_eq_ne_p && *op1 == const0_rtx)
-	;
+	{
+	  if (SUBREG_P (*op0) && TARGET_64BIT)
+	    *op0 = SUBREG_REG (*op0);
+	}
       else if (*code == EQ || *code == NE)
 	{
 	  if (need_eq_ne_p)
@@ -13651,18 +13654,6 @@ mips_secondary_reload_class (enum reg_class rclass,
   return NO_REGS;
 }
 
-/* Implement TARGET_MODE_REP_EXTENDED.  */
-
-static int
-mips_mode_rep_extended (scalar_int_mode mode, scalar_int_mode mode_rep)
-{
-  /* On 64-bit targets, SImode register values are sign-extended to DImode.  */
-  if (TARGET_64BIT && mode == SImode && mode_rep == DImode)
-    return SIGN_EXTEND;
-
-  return UNKNOWN;
-}
-
 /* Implement TARGET_VALID_POINTER_MODE.  */
 
 static bool
@@ -22891,14 +22882,6 @@ mips_promote_function_mode (const_tree type ATTRIBUTE_UNUSED,
   return mode;
 }
 
-/* Implement TARGET_TRULY_NOOP_TRUNCATION.  */
-
-static bool
-mips_truly_noop_truncation (poly_uint64 outprec, poly_uint64 inprec)
-{
-  return !TARGET_64BIT || inprec <= 32 || outprec > 32;
-}
-
 /* Implement TARGET_CONSTANT_ALIGNMENT.  */
 
 static HOST_WIDE_INT
@@ -23151,9 +23134,6 @@ mips_bit_clear_p (enum machine_mode mode, unsigned HOST_WIDE_INT m)
 #undef TARGET_GET_RAW_ARG_MODE
 #define TARGET_GET_RAW_ARG_MODE mips_get_reg_raw_mode
 
-#undef TARGET_MODE_REP_EXTENDED
-#define TARGET_MODE_REP_EXTENDED mips_mode_rep_extended
-
 #undef TARGET_VECTORIZE_BUILTIN_VECTORIZED_FUNCTION
 #define TARGET_VECTORIZE_BUILTIN_VECTORIZED_FUNCTION \
   mips_builtin_vectorized_function
@@ -23292,9 +23272,6 @@ mips_bit_clear_p (enum machine_mode mode, unsigned HOST_WIDE_INT m)
 
 #undef TARGET_CAN_CHANGE_MODE_CLASS
 #define TARGET_CAN_CHANGE_MODE_CLASS mips_can_change_mode_class
-
-#undef TARGET_TRULY_NOOP_TRUNCATION
-#define TARGET_TRULY_NOOP_TRUNCATION mips_truly_noop_truncation
 
 #undef TARGET_CONSTANT_ALIGNMENT
 #define TARGET_CONSTANT_ALIGNMENT mips_constant_alignment

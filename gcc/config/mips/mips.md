@@ -814,6 +814,10 @@
 ;; concatenated HI and LO registers.
 (define_mode_iterator HILO [(DI "!TARGET_64BIT") (TI "TARGET_64BIT")])
 
+;; This mode iterator allows :HGPR to be used as the mode of real
+;; hardware GPR.
+(define_mode_iterator HGPR [(SI "!ABI_NEEDS_64BIT_REGS") (DI "ABI_NEEDS_64BIT_REGS")])
+
 ;; This mode iterator allows :P to be used for patterns that operate on
 ;; pointer-sized quantities.  Exactly one of the two alternatives will match.
 (define_mode_iterator P [(SI "Pmode == SImode") (DI "Pmode == DImode")])
@@ -3805,21 +3809,15 @@
 ;; instead allocated two separate GPRs.  We don't distinguish between
 ;; the GPR and LO cases because we don't usually know during pre-reload
 ;; scheduling whether an operand will be LO or not.
-(define_insn_and_split "extendsidi2"
+(define_insn "extendsidi2"
   [(set (match_operand:DI 0 "register_operand" "=d,l,d")
-        (sign_extend:DI (match_operand:SI 1 "nonimmediate_operand" "0,0,m")))]
-  "TARGET_64BIT"
+        (sign_extend:DI (match_operand:SI 1 "nonimmediate_operand" "d0,0,m")))]
+  "ABI_NEEDS_64BIT_REGS"
   "@
-   #
-   #
+   sll\t%0,%1
+   * return \"\";
    lw\t%0,%1"
-  "&& reload_completed && register_operand (operands[1], VOIDmode)"
-  [(const_int 0)]
-{
-  emit_note (NOTE_INSN_DELETED);
-  DONE;
-}
-  [(set_attr "move_type" "move,move,load")
+  [(set_attr "move_type" "signext,move,load")
    (set_attr "mode" "DI")])
 
 (define_expand "extend<SHORT:mode><GPR:mode>2"
@@ -6080,8 +6078,8 @@
   [(set (pc)
 	(if_then_else
 	 (match_operator 1 "order_operator"
-			 [(match_operand:GPR 2 "register_operand" "d,d")
-			  (match_operand:GPR 3 "reg_or_0_operand" "J,d")])
+			 [(match_operand:HGPR 2 "register_operand" "d,d")
+			  (match_operand:HGPR 3 "reg_or_0_operand" "J,d")])
 	 (label_ref (match_operand 0 "" ""))
 	 (pc)))]
   "!TARGET_MIPS16"
