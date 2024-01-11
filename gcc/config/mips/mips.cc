@@ -2217,7 +2217,18 @@ mips_classify_symbol (const_rtx x, enum mips_symbol_context context)
 	 access will work for any kind of symbol.  However, there seems
 	 little point in doing things differently.  */
       if (mips_global_symbol_p (x))
-	return SYMBOL_GOT_DISP;
+	{
+	  if (TARGET_PCREL_PIC
+	      && SYMBOL_REF_LOCAL_P (x) && !SYMBOL_REF_EXTERNAL_P (x))
+	    return SYMBOL_PC_RELATIVE;
+	  else
+	    return SYMBOL_GOT_DISP;
+	}
+
+      if (TARGET_PCREL_PIC && strcmp (XSTR (x, 0), "_gp_disp") == 0)
+	{
+	  return ABI_HAS_64BIT_SYMBOLS ? SYMBOL_64_LOW : SYMBOL_ABSOLUTE;
+	}
 
       return SYMBOL_GOT_PAGE_OFST;
     }
@@ -5243,6 +5254,7 @@ mips_output_move (rtx dest, rtx src)
   bool dbl_p = (GET_MODE_SIZE (mode) == 8);
   bool msa_p = MSA_SUPPORTED_MODE_P (mode);
   enum mips_symbol_type symbol_type;
+  rtx src0;
 
   if (mips_split_move_p (dest, src, SPLIT_IF_NECESSARY))
     return "#";
@@ -5385,7 +5397,43 @@ mips_output_move (rtx dest, rtx src)
 	}
 
       if (src_code == HIGH)
-	return (TARGET_MIPS16 && !ISA_HAS_MIPS16E2) ? "#" : "lui\t%0,%h1";
+	{
+	  src0 = XEXP (src, 0);
+	  enum mips_loadgp_style loadgp_style = mips_current_loadgp_style ();
+	  const_rtx symbol_ref;
+	  const char *label;
+	  if (TARGET_PCREL_PIC
+	      && (symbol_ref = get_first_code_subrtx (src0, SYMBOL_REF))
+	      && mips_symbolic_constant_p (src0, SYMBOL_CONTEXT_LEA, &symbol_type)
+	      && (symbol_type == SYMBOL_PC_RELATIVE
+		  || (symbol_type == SYMBOL_ABSOLUTE
+		      && loadgp_style == LOADGP_OLDABI
+		      && strcmp (XSTR (src0, 0), "_gp_disp") == 0)
+		  || (symbol_type == SYMBOL_GOTOFF_LOADGP
+		      && loadgp_style == LOADGP_NEWABI)))
+	    {
+	      if (symbol_type == SYMBOL_GOTOFF_LOADGP)
+		{
+		  label = XSTR (symbol_ref, 0);
+		  if (TARGET_PCREL_INSN)
+		    /* FIXME: Use ALUIPC when binutils is ready.  */
+		    return concat ("\n", label, ":\n\tauipc\t%0,%h1", NULL);
+		  else if (TARGET_64BIT)
+		    return concat ("bal\t. + 8\n\tlui\t%0,%h1\n", label, ":\n\tdaddu\t%0,%0,$ra", NULL);
+		  else
+		    return concat ("bal\t. + 8\n\tlui\t%0,%h1\n", label, ":\n\taddu\t%0,%0,$ra", NULL);
+		}
+	      if (!TARGET_PCREL_INSN)
+		return TARGET_64BIT ? "bal\t. + 8\n\tlui\t%0,%h1\n\tdaddu\t%0,%0,$ra"
+				    : "bal\t. + 8\n\tlui\t%0,%h1\n\taddu\t%0,%0,$ra";
+	      else if (TARGET_PCREL_INSN)
+		/* FIXME: Use ALUIPC when binutils is ready.  */
+		return "auipc\t%0,%h1";
+	      else
+		gcc_unreachable ();
+	    }
+	  return (TARGET_MIPS16 && !ISA_HAS_MIPS16E2) ? "#" : "lui\t%0,%h1";
+	}
 
       if (CONST_GP_P (src))
 	return "move\t%0,%1";
@@ -8908,6 +8956,10 @@ mips_init_relocs (void)
 
 	      mips_split_p[SYMBOL_ABSOLUTE] = true;
 	      mips_lo_relocs[SYMBOL_ABSOLUTE] = "%lo(";
+
+	      mips_split_p[SYMBOL_PC_RELATIVE] = true;
+	      mips_hi_relocs[SYMBOL_PC_RELATIVE] = "%pcrel_hi(";
+	      mips_lo_relocs[SYMBOL_PC_RELATIVE] = "(%pcrel_lo(";
 	    }
 	}
       else
@@ -8919,6 +8971,10 @@ mips_init_relocs (void)
 	      mips_split_p[SYMBOL_ABSOLUTE] = true;
 	      mips_hi_relocs[SYMBOL_ABSOLUTE] = "%hi(";
 	      mips_lo_relocs[SYMBOL_ABSOLUTE] = "%lo(";
+
+	      mips_split_p[SYMBOL_PC_RELATIVE] = true;
+	      mips_hi_relocs[SYMBOL_PC_RELATIVE] = "%pcrel_hi(";
+	      mips_lo_relocs[SYMBOL_PC_RELATIVE] = "(%pcrel_lo(";
 	    }
 	}
     }
@@ -9016,12 +9072,22 @@ mips_print_operand_reloc (FILE *file, rtx op, enum mips_symbol_context context,
 {
   enum mips_symbol_type symbol_type;
   const char *p;
+  static int count_pcrel_lo;
 
   symbol_type = mips_classify_symbolic_expression (op, context);
   gcc_assert (relocs[symbol_type]);
 
   fputs (relocs[symbol_type], file);
   output_addr_const (file, mips_strip_unspec_address (op));
+  if (strcmp (relocs[symbol_type], "%pcrel_hi(") == 0)
+    count_pcrel_lo = 0;
+  if (strcmp (relocs[symbol_type], "(%pcrel_lo(") == 0)
+    {
+      count_pcrel_lo ++;
+      fprintf (file, ")+%d)", 4 * count_pcrel_lo);
+      return;
+    }
+
   for (p = relocs[symbol_type]; *p != 0; p++)
     if (*p == '(')
       fputc (')', file);
@@ -10938,7 +11004,7 @@ mips_global_pointer (void)
 
   /* If the global pointer is call-saved, try to use a call-clobbered
      alternative.  */
-  if (TARGET_CALL_SAVED_GP && crtl->is_leaf)
+  if ((TARGET_CALL_SAVED_GP || TARGET_PCREL_PIC) && crtl->is_leaf)
     for (regno = GP_REG_FIRST; regno <= GP_REG_LAST; regno++)
       if (!df_regs_ever_live_p (regno)
 	  && call_used_regs[regno]
@@ -11196,6 +11262,10 @@ mips_save_reg_p (unsigned int regno)
   /* We need to save the incoming return address if __builtin_eh_return
      is being used to set a different return address.  */
   if (regno == RETURN_ADDR_REGNUM && crtl->calls_eh_return)
+    return true;
+
+  /* We need to use NAL to get PC.  NAL will clobber $ra.  */
+  if (TARGET_PCREL_PIC && !TARGET_PCREL_INSN && regno == RETURN_ADDR_REGNUM)
     return true;
 
   return false;
@@ -12140,7 +12210,8 @@ mips_output_function_prologue (FILE *file)
      Also emit the ".set noreorder; .set nomacro" sequence for functions
      that need it.  */
   if (mips_must_initialize_gp_p ()
-      && mips_current_loadgp_style () == LOADGP_OLDABI)
+      && mips_current_loadgp_style () == LOADGP_OLDABI
+      && !TARGET_PCREL_PIC)
     {
       if (TARGET_MIPS16)
 	{
@@ -12225,6 +12296,10 @@ mips_frame_barrier (void)
 
 static GTY(()) rtx mips_gnu_local_gp;
 
+/* The _gp_disp symbol.  */
+
+static GTY(()) rtx mips_gp_disp;
+
 /* If we're generating n32 or n64 abicalls, emit instructions
    to set up the global pointer.  */
 
@@ -12248,14 +12323,37 @@ mips_emit_loadgp (void)
 
     case LOADGP_OLDABI:
       /* Added by mips_output_function_prologue.  */
+      if (!mips_must_initialize_gp_p () || !TARGET_PCREL_PIC)
+	break;
+      if (mips_gp_disp == NULL)
+	{
+	  mips_gp_disp = gen_rtx_SYMBOL_REF (Pmode, "_gp_disp");
+	  SYMBOL_REF_FLAGS (mips_gp_disp) |= SYMBOL_FLAG_LOCAL;
+	}
+      emit_insn (gen_rtx_SET (pic_reg, gen_rtx_HIGH (Pmode, mips_gp_disp)));
+      emit_insn (gen_rtx_SET (pic_reg, gen_rtx_LO_SUM (Pmode, pic_reg, mips_gp_disp)));
+      SCHED_GROUP_P (get_last_insn ()) = 1;
       break;
 
     case LOADGP_NEWABI:
+      if (TARGET_PCREL_PIC)
+	{
+	  char *label_name = concat (".L_",
+				     IDENTIFIER_POINTER (DECL_NAME (current_function_decl)),
+				     "_gotcalc", NULL);
+	  addr = gen_rtx_SYMBOL_REF (Pmode, label_name);
+	  SYMBOL_REF_FLAGS (addr) |= SYMBOL_FLAG_LOCAL;
+	  offset = mips_unspec_address (addr, SYMBOL_GOTOFF_LOADGP);
+	  incoming_address = gen_rtx_REG (Pmode, RETURN_ADDR_REGNUM);
+	  emit_insn (PMODE_INSN (gen_loadgp_newabi_pcrel,
+				(pic_reg, offset, incoming_address)));
+	  break;
+	}
       addr = XEXP (DECL_RTL (current_function_decl), 0);
       offset = mips_unspec_address (addr, SYMBOL_GOTOFF_LOADGP);
       incoming_address = gen_rtx_REG (Pmode, PIC_FUNCTION_ADDR_REGNUM);
       emit_insn (PMODE_INSN (gen_loadgp_newabi,
-			     (pic_reg, offset, incoming_address)));
+			    (pic_reg, offset, incoming_address)));
       break;
 
     case LOADGP_RTP:
@@ -15449,6 +15547,43 @@ mips_sched_reorder2 (FILE *file ATTRIBUTE_UNUSED, int verbose ATTRIBUTE_UNUSED,
 {
   mips_sched_reorder_1 (file, verbose, ready, nreadyp, cycle);
   return cached_can_issue_more;
+}
+
+/* Implement TARGET_SCHED_MACRO_FUSION_PAIR_P.  Return true if PREV and CURR
+   should be kept together during scheduling.
+   TARGET_SCHED_MACRO_FUSION_P is set to always true.  */
+
+static bool
+mips_macro_fusion_pair_p (rtx_insn *prev ATTRIBUTE_UNUSED, rtx_insn *curr)
+{
+  rtx curr_set = single_set (curr);
+  rtx csrc = SET_SRC (curr_set);
+
+  /* If TARGET_PCREL_PIC,
+     (set (reg/i:SI 2 $2)
+	  (mem/c:SI (lo_sum:SI (reg/f:SI 2 $2 [196])
+			(symbol_ref:SI ("g") [flags 0x2])) [1 g+0 S4 A32]))
+     (set (reg/f:SI 201)
+	  (lo_sum:SI (reg/f:SI 202)
+		     (symbol_ref:SI ("f") [flags 0x3])))
+     (set (reg:SI 3 $3 [ g+4 ])
+	  (mem/c:SI (lo_sum:SI (reg/f:SI 2 $2 [196])
+			       (const:SI (plus:SI (symbol_ref:SI ("g") [flags 0x2])
+						  (const_int 4 [0x4])))) [1 g+4 S4 A32]))
+     will be convert to %pcrel_lo.  */
+  if (TARGET_PCREL_PIC)
+    {
+      const_rtx symbol_ref = NULL_RTX;
+      const_rtx lo_sum = get_first_code_subrtx (csrc, LO_SUM);
+      if (lo_sum)
+	symbol_ref = get_first_code_subrtx (lo_sum, SYMBOL_REF);
+
+      if (symbol_ref && SYMBOL_REF_P (symbol_ref)
+	  && SYMBOL_REF_LOCAL_P (symbol_ref) && !SYMBOL_REF_EXTERNAL_P (symbol_ref))
+	return true;
+    }
+
+  return false;
 }
 
 /* Update round-robin counters for ALU1/2 and FALU1/2.  */
@@ -23076,6 +23211,11 @@ mips_bit_clear_p (enum machine_mode mode, unsigned HOST_WIDE_INT m)
 #undef TARGET_SCHED_FIRST_CYCLE_MULTIPASS_DFA_LOOKAHEAD
 #define TARGET_SCHED_FIRST_CYCLE_MULTIPASS_DFA_LOOKAHEAD \
   mips_multipass_dfa_lookahead
+#undef TARGET_SCHED_MACRO_FUSION_P
+#define TARGET_SCHED_MACRO_FUSION_P hook_bool_void_true
+#undef TARGET_SCHED_MACRO_FUSION_PAIR_P
+#define TARGET_SCHED_MACRO_FUSION_PAIR_P mips_macro_fusion_pair_p
+
 #undef TARGET_SMALL_REGISTER_CLASSES_FOR_MODE_P
 #define TARGET_SMALL_REGISTER_CLASSES_FOR_MODE_P \
   mips_small_register_classes_for_mode_p
