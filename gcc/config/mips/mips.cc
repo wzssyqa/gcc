@@ -2197,6 +2197,13 @@ mips_classify_symbol (const_rtx x, enum mips_symbol_context context)
   if (TARGET_ABICALLS_PIC2
       && !(TARGET_ABSOLUTE_ABICALLS && mips_symbol_binds_local_p (x)))
     {
+      /* Non-preemtive global variables.  */
+      if (TARGET_EXPLICIT_RELOCS
+	  && mips_split_p[SYMBOL_GP_OFFSET]
+	  && SYMBOL_REF_P (x)
+	  && SYMBOL_REF_LOCAL_P (x)
+	  && !SYMBOL_REF_EXTERNAL_P (x))
+	return SYMBOL_GP_OFFSET;
       /* There are three cases to consider:
 
 	    - o32 PIC (either with or without explicit relocs)
@@ -2307,6 +2314,7 @@ mips_symbolic_constant_p (rtx x, enum mips_symbol_context context,
       /* Fall through.  */
 
     case SYMBOL_GP_RELATIVE:
+    case SYMBOL_GP_OFFSET:
       /* Make sure that the offset refers to something within the
 	 same object block.  This should guarantee that the final
 	 PC- or GP-relative offset is within the 16-bit limit.  */
@@ -2383,6 +2391,9 @@ mips_symbol_insns_1 (enum mips_symbol_type type, machine_mode mode)
       /* Treat GP-relative accesses as taking a single instruction on
 	 MIPS16 too; the copy of $gp can often be shared.  */
       return 1;
+
+    case SYMBOL_GP_OFFSET:
+      return (mips_isa_rev >= 6) ? 1 : 2;
 
     case SYMBOL_PC_RELATIVE:
       /* PC-relative constants can be only be used with ADDIUPC,
@@ -3472,6 +3483,11 @@ mips_split_symbol (rtx temp, rtx addr, machine_mode mode, rtx *low_out)
 		high = mips_pic_base_register (temp);
 		*low_out = gen_rtx_LO_SUM (Pmode, high, addr);
 		break;
+
+	      case SYMBOL_GP_OFFSET:
+		cfun->machine->has_flexible_gp_insn_p = true;
+		cfun->machine->use_global_pointer_implicitly = true;
+		/* Fall through */
 
 	      default:
 		high = gen_rtx_HIGH (Pmode, copy_rtx (addr));
@@ -5384,6 +5400,22 @@ mips_output_move (rtx dest, rtx src)
 	    return "#";
 	}
 
+      if (src_code == HIGH && !TARGET_MIPS16
+	  && SYMBOL_REF_P (XEXP (src, 0))
+	  && mips_classify_symbol (XEXP (src, 0), SYMBOL_CONTEXT_LEA)
+			== SYMBOL_GP_OFFSET)
+	{
+	  char ret[32];
+	  if (mips_isa_rev >= 6)
+	    snprintf (ret, 31, "%s\t%%0,$%d,%%h1",
+		      TARGET_64BIT ? "daui" : "aui",
+		      REGNO (pic_offset_table_rtx));
+	  else
+	    snprintf (ret, 31, "lui\t%%0,%%h1\n\t%s\t%%0,%%0,$%d",
+		      TARGET_64BIT ? "daddu" : "addu",
+		      REGNO (pic_offset_table_rtx));
+	  return ggc_strdup (ret);
+	}
       if (src_code == HIGH)
 	return (TARGET_MIPS16 && !ISA_HAS_MIPS16E2) ? "#" : "lui\t%0,%h1";
 
@@ -8982,6 +9014,15 @@ mips_init_relocs (void)
       mips_split_p[SYMBOL_GOTOFF_LOADGP] = true;
       mips_hi_relocs[SYMBOL_GOTOFF_LOADGP] = "%hi(%neg(%gp_rel(";
       mips_lo_relocs[SYMBOL_GOTOFF_LOADGP] = "%lo(%neg(%gp_rel(";
+      mips_split_p[SYMBOL_GP_OFFSET] = true;
+      mips_hi_relocs[SYMBOL_GP_OFFSET] = "%hi(%gp_rel(";
+      mips_lo_relocs[SYMBOL_GP_OFFSET] = "%lo(%gp_rel(";
+    }
+  else
+    {
+      mips_split_p[SYMBOL_GP_OFFSET] = true;
+      mips_hi_relocs[SYMBOL_GP_OFFSET] = "%gprel_hi(";
+      mips_lo_relocs[SYMBOL_GP_OFFSET] = "%gprel_lo(";
     }
 
   mips_lo_relocs[SYMBOL_TLSGD] = "%tlsgd(";
@@ -12275,7 +12316,8 @@ mips_emit_loadgp (void)
   /* Emit a blockage if there are implicit uses of the GP register.
      This includes profiled functions, because FUNCTION_PROFILE uses
      a jal macro.  */
-  if (!TARGET_EXPLICIT_RELOCS || crtl->profile)
+  if (!TARGET_EXPLICIT_RELOCS || crtl->profile
+      || cfun->machine->use_global_pointer_implicitly)
     emit_insn (gen_loadgp_blockage ());
 }
 

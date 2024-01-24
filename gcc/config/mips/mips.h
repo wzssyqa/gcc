@@ -3338,6 +3338,9 @@ struct GTY(())  machine_function {
      if the function doesn't need one.  */
   unsigned int global_pointer;
 
+  /* True if the function may use global_pointer implicitly.  */
+  bool use_global_pointer_implicitly;
+
   /* How many instructions it takes to load a label into $AT, or 0 if
      this property hasn't yet been calculated.  */
   unsigned int load_label_num_insns;

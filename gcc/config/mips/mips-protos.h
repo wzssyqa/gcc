@@ -50,6 +50,10 @@ enum mips_symbol_context {
        The symbol's value will be calculated by adding a 16-bit offset
        from $gp.
 
+   SYMBOL_GP_OFFSET
+       The symbol's value will be calculated by adding a 32-bit offset
+       from $gp.
+
    SYMBOL_PC_RELATIVE
        The symbol's value will be calculated using a MIPS16 PC-relative
        calculation.
@@ -107,6 +111,7 @@ enum mips_symbol_context {
 enum mips_symbol_type {
   SYMBOL_ABSOLUTE,
   SYMBOL_GP_RELATIVE,
+  SYMBOL_GP_OFFSET,
   SYMBOL_PC_RELATIVE,
   SYMBOL_GOT_PAGE_OFST,
   SYMBOL_GOT_DISP,
