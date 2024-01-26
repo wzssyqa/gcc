@@ -4748,7 +4748,7 @@
 	(match_operand:P 1 "got_disp_operand" ""))]
   "TARGET_EXPLICIT_RELOCS && !mips_split_p[SYMBOL_GOT_DISP]"
   "#"
-  "&& reload_completed"
+  "&& reload_completed && !(TARGET_PCREL_PIC && SYMBOL_REF_LOCAL_P (operands[1]) && !SYMBOL_REF_EXTERNAL_P (operands[1]))"
   [(set (match_dup 0) (match_dup 2))]
   { operands[2] = mips_got_load (NULL, operands[1], SYMBOL_GOTOFF_DISP); }
   [(set_attr "got" "load")
@@ -4977,6 +4977,41 @@
   if (mips_legitimize_move (<MODE>mode, operands[0], operands[1]))
     DONE;
 })
+
+;; PCREL uses NAL to get PC on pre-R6.  NAL will clobber $RA.
+(define_peephole2
+  [(set (match_operand:P 0 "register_operand")
+	(match_operand:P 1 "pcrel_symbolic_operand"))]
+  "TARGET_PCREL_PIC && !TARGET_PCREL_INSN"
+  [(parallel [(clobber (reg:P RETURN_ADDR_REGNUM))
+	      (set (match_dup 0)
+		   (match_dup 1))])]
+  "")
+
+;; Load address with PCREL instructions: auipc.
+(define_insn "*load_addr_<mode>_pcrel_r6"
+  [(set (match_operand:P 0 "register_operand" "=d")
+	(match_operand:P 1 "pcrel_symbolic_operand" ""))]
+  "TARGET_PCREL_PIC"
+  { return mips_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "move")
+   (set (attr "insn_count")
+	(if_then_else (match_test "TARGET_PCREL_INSN")
+		      (const_int 2)
+		      (const_int 4)))])
+
+;; Load address with PCREL instructions: bal.
+(define_insn "*load_addr_<mode>_pcrel"
+  [(clobber (reg:P RETURN_ADDR_REGNUM))
+   (set (match_operand:P 0 "register_operand" "=d")
+	(match_operand:P 1 "pcrel_symbolic_operand" ""))]
+  "TARGET_PCREL_PIC"
+  { return mips_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "move")
+   (set (attr "insn_count")
+	(if_then_else (match_test "TARGET_PCREL_INSN")
+		      (const_int 2)
+		      (const_int 4)))])
 
 ;; The difference between these two is whether or not ints are allowed
 ;; in FP registers (off by default, use -mdebugh to enable).
@@ -5603,7 +5638,7 @@
 	(unspec:P [(match_operand:P 1)
 		   (match_operand:P 2 "register_operand" "d")]
 		  UNSPEC_LOADGP))]
-  "mips_current_loadgp_style () == LOADGP_NEWABI"
+  "mips_current_loadgp_style () == LOADGP_NEWABI && !TARGET_PCREL_PIC"
   { return mips_must_initialize_gp_p () ? "#" : ""; }
   "&& mips_must_initialize_gp_p ()"
   [(set (match_dup 0) (match_dup 3))
@@ -5615,6 +5650,20 @@
   operands[5] = gen_rtx_LO_SUM (Pmode, operands[0], operands[1]);
 }
   [(set_attr "type" "ghost")])
+
+(define_insn "loadgp_pcrel_<mode>"
+  [(set (match_operand:P 0 "register_operand" "=d")
+	(unspec:P [(const_int 0)] UNSPEC_LOADGP))
+   (clobber (match_operand:P 1 "register_operand" "=d"))]
+  "TARGET_PCREL_PIC
+   && (mips_current_loadgp_style () == LOADGP_NEWABI
+    || mips_current_loadgp_style () == LOADGP_OLDABI)"
+  { return mips_output_loadgp_pcrel (operands[0]);}
+  [(set_attr "move_type" "move")
+   (set (attr "insn_count")
+	(if_then_else (match_test "TARGET_PCREL_INSN")
+		      (const_int 2)
+		      (const_int 4)))])
 
 ;; Likewise, for -mno-shared code.  Operand 0 is the __gnu_local_gp symbol.
 (define_insn_and_split "loadgp_absolute_<mode>"
