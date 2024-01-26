@@ -2197,6 +2197,22 @@ mips_classify_symbol (const_rtx x, enum mips_symbol_context context)
   if (TARGET_ABICALLS_PIC2
       && !(TARGET_ABSOLUTE_ABICALLS && mips_symbol_binds_local_p (x)))
     {
+      /* */
+      if (TARGET_PCREL_PIC)
+	{
+	  /* Used by kernel: all symbols are local.  */
+	  if (!TARGET_SHARED)
+	    return SYMBOL_PC_RELATIVE;
+	  else if (strcmp (XSTR (x, 0), "_gp_disp") == 0)
+	    return ABI_HAS_64BIT_SYMBOLS ? SYMBOL_64_LOW : SYMBOL_ABSOLUTE;
+	  /* Variables defined in the same compile unit may set as local
+	     by -fvisibility=hidden.  Note: mips_global_symbol_p claims
+	     that it is global.  */
+	  else if (SYMBOL_REF_LOCAL_P (x))
+	    return SYMBOL_PC_RELATIVE;
+	  else if (mips_global_symbol_p (x))
+	    return SYMBOL_GOT_DISP;
+	}
       /* There are three cases to consider:
 
 	    - o32 PIC (either with or without explicit relocs)
@@ -2385,6 +2401,9 @@ mips_symbol_insns_1 (enum mips_symbol_type type, machine_mode mode)
       return 1;
 
     case SYMBOL_PC_RELATIVE:
+      if (TARGET_PCREL_PIC && !TARGET_PCREL_INSN)
+	return 4;
+
       /* PC-relative constants can be only be used with ADDIUPC,
 	 DADDIUPC, LWPC and LDPC.  */
       if (mode == MAX_MACHINE_MODE
@@ -3471,6 +3490,12 @@ mips_split_symbol (rtx temp, rtx addr, machine_mode mode, rtx *low_out)
 	      case SYMBOL_GP_RELATIVE:
 		high = mips_pic_base_register (temp);
 		*low_out = gen_rtx_LO_SUM (Pmode, high, addr);
+		break;
+
+	      case SYMBOL_PC_RELATIVE:
+		high = gen_reg_rtx (Pmode);
+		emit_insn (gen_rtx_SET (high, copy_rtx (addr)));
+		*low_out = high;
 		break;
 
 	      default:
@@ -5391,12 +5416,30 @@ mips_output_move (rtx dest, rtx src)
 	return "move\t%0,%1";
 
       if (mips_symbolic_constant_p (src, SYMBOL_CONTEXT_LEA, &symbol_type)
-	  && mips_lo_relocs[symbol_type] != 0)
+	  && mips_lo_relocs[symbol_type] != 0
+	  && !TARGET_PCREL_PIC
+	  && symbol_type != SYMBOL_PC_RELATIVE)
 	{
 	  /* A signed 16-bit constant formed by applying a relocation
 	     operator to a symbolic address.  */
 	  gcc_assert (!mips_split_p[symbol_type]);
 	  return "li\t%0,%R1";
+	}
+
+      if (TARGET_PCREL_PIC
+	  && symbol_type == SYMBOL_PC_RELATIVE
+	  && mips_split_p[symbol_type])
+	{
+	  const char *addiu_ins = TARGET_64BIT ? "daddiu" : "addiu";
+	  const char *addu_ins = TARGET_64BIT ? "daddu" : "addu";
+	  if (TARGET_PCREL_INSN)
+	    return concat ("auipc\t%0,%h1\n\t",
+			   addiu_ins,"\t%0,%0,%R1", NULL);
+	  else
+	    return concat ("bal\t. + 8\n\t",
+			   "lui\t%0,%h1\n\t",
+			   addu_ins, "\t%0,%0,$ra\n\t",
+			   addiu_ins,"\t%0,%0,%R1", NULL);
 	}
 
       if (symbolic_operand (src, VOIDmode))
@@ -5455,6 +5498,44 @@ mips_output_move (rtx dest, rtx src)
     }
   gcc_unreachable ();
 }
+
+/* Return the string of loadgp with PCREL.  */
+const char *
+mips_output_loadgp_pcrel (rtx)
+{
+  /* Not supported yet.  */
+  if (TARGET_NEWABI && !mips_split_p[SYMBOL_GOTOFF_LOADGP])
+    gcc_unreachable ();
+
+  if (!mips_must_initialize_gp_p ())
+    return "";
+
+  const char *addiu_ins = TARGET_64BIT ? "daddiu" : "addiu";
+  const char *addu_ins = TARGET_64BIT ? "daddu" : "addu";
+  if (TARGET_PCREL_INSN && TARGET_NEWABI)
+    return concat ("auipc\t%0,%%hi(%%neg(%%gp_rel(.)))\n\t",
+		   addiu_ins, "\t%0,%0,%%lo(%%neg(%%gp_rel(. - 4)))",
+		   NULL);
+  else if (TARGET_PCREL_INSN && TARGET_OLDABI)
+    return concat ("auipc\t%0,%%hi(_gp_disp)\n\t",
+		   addiu_ins, "\t%0,%0,%%lo(_gp_disp)",
+		   NULL);
+  else if (TARGET_OLDABI)
+    return concat ("bal\t. + 8\n\t",
+		   "lui\t%0,%%hi(_gp_disp)\n\t",
+		   addu_ins, "\t%0,%0,$ra\n\t",
+		   addiu_ins, "\t%0,%0,%%lo(_gp_disp)",
+		   NULL);
+  else if (TARGET_NEWABI)
+    return concat ("bal\t. + 8\n\t",
+		   "lui\t%0,%%hi(%%neg(%%gp_rel(. + 4)))\n\t",
+		   addu_ins, "\t%0,%0,$ra\n\t",
+		   addiu_ins, "\t%0,%0,%%lo(%%neg(%%gp_rel(. - 4)))",
+		   NULL);
+
+  gcc_unreachable ();
+}
+
 
 /* Return true if CMP1 is a suitable second operand for integer ordering
    test CODE.  See also the *sCC patterns in mips.md.  */
@@ -8908,6 +8989,10 @@ mips_init_relocs (void)
 
 	      mips_split_p[SYMBOL_ABSOLUTE] = true;
 	      mips_lo_relocs[SYMBOL_ABSOLUTE] = "%lo(";
+
+	      mips_split_p[SYMBOL_PC_RELATIVE] = true;
+	      mips_hi_relocs[SYMBOL_PC_RELATIVE] = "%pcrel_hi(";
+	      mips_lo_relocs[SYMBOL_PC_RELATIVE] = "%pcrel_lo(";
 	    }
 	}
       else
@@ -8919,6 +9004,10 @@ mips_init_relocs (void)
 	      mips_split_p[SYMBOL_ABSOLUTE] = true;
 	      mips_hi_relocs[SYMBOL_ABSOLUTE] = "%hi(";
 	      mips_lo_relocs[SYMBOL_ABSOLUTE] = "%lo(";
+
+	      mips_split_p[SYMBOL_PC_RELATIVE] = true;
+	      mips_hi_relocs[SYMBOL_PC_RELATIVE] = "%pcrel_hi(";
+	      mips_lo_relocs[SYMBOL_PC_RELATIVE] = "%pcrel_lo(";
 	    }
 	}
     }
@@ -9022,6 +9111,10 @@ mips_print_operand_reloc (FILE *file, rtx op, enum mips_symbol_context context,
 
   fputs (relocs[symbol_type], file);
   output_addr_const (file, mips_strip_unspec_address (op));
+  if (strcmp (relocs[symbol_type], "%pcrel_hi(") == 0
+      || strcmp (relocs[symbol_type], "%pcrel_lo(") == 0)
+    fputs (" + 4", file);
+
   for (p = relocs[symbol_type]; *p != 0; p++)
     if (*p == '(')
       fputc (')', file);
@@ -10938,7 +11031,7 @@ mips_global_pointer (void)
 
   /* If the global pointer is call-saved, try to use a call-clobbered
      alternative.  */
-  if (TARGET_CALL_SAVED_GP && crtl->is_leaf)
+  if ((TARGET_CALL_SAVED_GP || TARGET_PCREL_PIC) && crtl->is_leaf)
     for (regno = GP_REG_FIRST; regno <= GP_REG_LAST; regno++)
       if (!df_regs_ever_live_p (regno)
 	  && call_used_regs[regno]
@@ -11196,6 +11289,10 @@ mips_save_reg_p (unsigned int regno)
   /* We need to save the incoming return address if __builtin_eh_return
      is being used to set a different return address.  */
   if (regno == RETURN_ADDR_REGNUM && crtl->calls_eh_return)
+    return true;
+
+  /* We need to use NAL to get PC.  NAL will clobber $ra.  */
+  if (TARGET_PCREL_PIC && !TARGET_PCREL_INSN && regno == RETURN_ADDR_REGNUM)
     return true;
 
   return false;
@@ -12140,7 +12237,8 @@ mips_output_function_prologue (FILE *file)
      Also emit the ".set noreorder; .set nomacro" sequence for functions
      that need it.  */
   if (mips_must_initialize_gp_p ()
-      && mips_current_loadgp_style () == LOADGP_OLDABI)
+      && mips_current_loadgp_style () == LOADGP_OLDABI
+      && !TARGET_PCREL_PIC)
     {
       if (TARGET_MIPS16)
 	{
@@ -12225,6 +12323,10 @@ mips_frame_barrier (void)
 
 static GTY(()) rtx mips_gnu_local_gp;
 
+/* The _gp_disp symbol.  */
+
+static GTY(()) rtx mips_gp_disp;
+
 /* If we're generating n32 or n64 abicalls, emit instructions
    to set up the global pointer.  */
 
@@ -12248,14 +12350,32 @@ mips_emit_loadgp (void)
 
     case LOADGP_OLDABI:
       /* Added by mips_output_function_prologue.  */
+      if (!mips_must_initialize_gp_p () || !TARGET_PCREL_PIC)
+	break;
+      {
+	rtx clobbered_reg =
+	  TARGET_PCREL_INSN ? gen_rtx_REG (Pmode, 0)
+			    : INCOMING_RETURN_ADDR_RTX;
+	emit_insn (PMODE_INSN (gen_loadgp_pcrel,
+				(pic_reg, clobbered_reg)));
+      }
       break;
 
     case LOADGP_NEWABI:
+      if (TARGET_PCREL_PIC)
+	{
+	  rtx clobbered_reg =
+		  TARGET_PCREL_INSN ? gen_rtx_REG (Pmode, 0)
+				    : INCOMING_RETURN_ADDR_RTX;
+	  emit_insn (PMODE_INSN (gen_loadgp_pcrel,
+				(pic_reg, clobbered_reg)));
+	  break;
+	}
       addr = XEXP (DECL_RTL (current_function_decl), 0);
       offset = mips_unspec_address (addr, SYMBOL_GOTOFF_LOADGP);
       incoming_address = gen_rtx_REG (Pmode, PIC_FUNCTION_ADDR_REGNUM);
       emit_insn (PMODE_INSN (gen_loadgp_newabi,
-			     (pic_reg, offset, incoming_address)));
+			    (pic_reg, offset, incoming_address)));
       break;
 
     case LOADGP_RTP:

@@ -3600,6 +3600,7 @@ extern void set_insn_deleted (rtx_insn *);
 
 extern rtx single_set_2 (const rtx_insn *, const_rtx);
 extern rtx simple_regno_set (rtx, unsigned int);
+extern const_rtx get_first_code_subrtx (const_rtx, enum rtx_code);
 extern bool contains_symbol_ref_p (const_rtx);
 extern bool contains_symbolic_reference_p (const_rtx);
 extern bool contains_constant_pool_address_p (const_rtx);

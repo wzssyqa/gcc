@@ -54,6 +54,10 @@ mabicalls
 Target Mask(ABICALLS)
 Generate code that can be used in SVR4-style dynamic objects.
 
+mforce-pcrel
+Target Mask(FORCE_PCREL)
+Use PC-relative operations even with significant performance degrading.
+
 mmad
 Target Var(TARGET_MAD)
 Use PMC-style 'mad' instructions.
