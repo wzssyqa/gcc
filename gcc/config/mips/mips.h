@@ -154,6 +154,16 @@ struct mips_cpu_info {
 #define TARGET_ABICALLS_PIC2 \
   (TARGET_ABICALLS && !TARGET_ABICALLS_PIC0)
 
+/* True if there are instructions that can get value of PC without side effects.
+   Otherwise, we will need to use NAL, which clobbers $31.  */
+#define TARGET_PCREL_INSN (mips_isa_rev >= 6)
+
+/* True if the output file is shared but not abicall, aka pcrel.
+   FIXME: enable it for MIPS16 and microMIPS?  */
+#define TARGET_PCREL_PIC (flag_pic && TARGET_EXPLICIT_RELOCS		\
+			  && !TARGET_MIPS16 && !TARGET_MICROMIPS	\
+			  && (TARGET_PCREL_INSN || TARGET_FORCE_PCREL))
+
 /* True if the call patterns should be split into a jalr followed by
    an instruction to restore $gp.  It is only safe to split the load
    from the call when every use of $gp is explicit.
@@ -175,7 +185,8 @@ struct mips_cpu_info {
   (TARGET_ABICALLS			\
    && !TARGET_SHARED			\
    && TARGET_EXPLICIT_RELOCS		\
-   && !ABI_HAS_64BIT_SYMBOLS)
+   && !ABI_HAS_64BIT_SYMBOLS		\
+   && !TARGET_PCREL_PIC)
 
 /* True if we can optimize sibling calls.  For simplicity, we only
    handle cases in which call_insn_operand will reject invalid
@@ -192,7 +203,9 @@ struct mips_cpu_info {
   (!TARGET_MIPS16 && (!TARGET_USE_GOT || TARGET_EXPLICIT_RELOCS))
 
 /* True if we need to use a global offset table to access some symbols.  */
-#define TARGET_USE_GOT (TARGET_ABICALLS || TARGET_RTP_PIC)
+#define TARGET_USE_GOT ((TARGET_ABICALLS				\
+			 && !(TARGET_PCREL_PIC && !TARGET_SHARED))	\
+			|| TARGET_RTP_PIC)
 
 /* True if TARGET_USE_GOT and if $gp is a call-clobbered register.  */
 #define TARGET_CALL_CLOBBERED_GP (TARGET_ABICALLS && TARGET_OLDABI)

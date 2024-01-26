@@ -6840,17 +6840,25 @@ get_index_code (const struct address_info *info)
   return SCRATCH;
 }
 
+/* Return first subrtx with CODE of RTL X.  */
+
+const_rtx
+get_first_code_subrtx (const_rtx x, enum rtx_code code)
+{
+  subrtx_iterator::array_type array;
+  FOR_EACH_SUBRTX (iter, array, x, ALL)
+    if (GET_CODE (*iter) == code)
+      return *iter;
+
+  return NULL_RTX;
+}
+
 /* Return true if RTL X contains a SYMBOL_REF.  */
 
 bool
 contains_symbol_ref_p (const_rtx x)
 {
-  subrtx_iterator::array_type array;
-  FOR_EACH_SUBRTX (iter, array, x, ALL)
-    if (SYMBOL_REF_P (*iter))
-      return true;
-
-  return false;
+  return !! get_first_code_subrtx (x, SYMBOL_REF);
 }
 
 /* Return true if RTL X contains a SYMBOL_REF or LABEL_REF.  */

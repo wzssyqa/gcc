@@ -4748,7 +4748,7 @@
 	(match_operand:P 1 "got_disp_operand" ""))]
   "TARGET_EXPLICIT_RELOCS && !mips_split_p[SYMBOL_GOT_DISP]"
   "#"
-  "&& reload_completed"
+  "&& reload_completed && !(TARGET_PCREL_PIC && SYMBOL_REF_LOCAL_P (operands[1]) && !SYMBOL_REF_EXTERNAL_P (operands[1]))"
   [(set (match_dup 0) (match_dup 2))]
   { operands[2] = mips_got_load (NULL, operands[1], SYMBOL_GOTOFF_DISP); }
   [(set_attr "got" "load")
@@ -4977,6 +4977,34 @@
   if (mips_legitimize_move (<MODE>mode, operands[0], operands[1]))
     DONE;
 })
+
+;; PCREL uses NAL to get PC on pre-R6.  NAL will clobber $RA.
+(define_peephole2
+  [(set (match_operand:P 0 "register_operand")
+	(high:P (match_operand:P 1 "symbol_ref_operand")))]
+  "TARGET_PCREL_PIC && !TARGET_PCREL_INSN
+   && GET_CODE (operands[1]) == SYMBOL_REF
+   && SYMBOL_REF_LOCAL_P (operands[1]) && !SYMBOL_REF_EXTERNAL_P (operands[1])"
+  [(parallel [(clobber (reg:P RETURN_ADDR_REGNUM))
+	      (set (match_dup 0)
+		   (high:P (match_dup 1)))])]
+  "")
+
+(define_insn "*mov<mode>_pcrel"
+  [(clobber (reg:P RETURN_ADDR_REGNUM))
+   (set (match_operand:P 0 "register_operand" "=d")
+	(match_operand:P 1 "move_operand" "Yd"))]
+  "TARGET_PCREL_PIC
+   && GET_CODE (operands[1]) == HIGH
+   && contains_symbol_ref_p (XEXP (operands[1], 0))
+   && SYMBOL_REF_LOCAL_P (get_first_code_subrtx (XEXP (operands[1], 0), SYMBOL_REF))
+   && !SYMBOL_REF_EXTERNAL_P (get_first_code_subrtx (XEXP (operands[1], 0), SYMBOL_REF))"
+  { return mips_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "move")
+   (set (attr "insn_count")
+	(if_then_else (match_test "TARGET_PCREL_INSN")
+		      (const_int 1)
+		      (const_int 3)))])
 
 ;; The difference between these two is whether or not ints are allowed
 ;; in FP registers (off by default, use -mdebugh to enable).
@@ -5603,7 +5631,7 @@
 	(unspec:P [(match_operand:P 1)
 		   (match_operand:P 2 "register_operand" "d")]
 		  UNSPEC_LOADGP))]
-  "mips_current_loadgp_style () == LOADGP_NEWABI"
+  "mips_current_loadgp_style () == LOADGP_NEWABI && !TARGET_PCREL_PIC"
   { return mips_must_initialize_gp_p () ? "#" : ""; }
   "&& mips_must_initialize_gp_p ()"
   [(set (match_dup 0) (match_dup 3))
@@ -5613,6 +5641,23 @@
   operands[3] = gen_rtx_HIGH (Pmode, operands[1]);
   operands[4] = gen_rtx_PLUS (Pmode, operands[0], operands[2]);
   operands[5] = gen_rtx_LO_SUM (Pmode, operands[0], operands[1]);
+}
+  [(set_attr "type" "ghost")])
+
+(define_insn_and_split "loadgp_newabi_pcrel_<mode>"
+  [(set (match_operand:P 0 "register_operand" "=&d")
+	(unspec:P [(match_operand:P 1)
+		   (match_operand:P 2)]
+		  UNSPEC_LOADGP))]
+  "mips_current_loadgp_style () == LOADGP_NEWABI && TARGET_PCREL_PIC"
+  { return mips_must_initialize_gp_p () ? "#" : ""; }
+  "&& mips_must_initialize_gp_p ()"
+  [(parallel [(clobber (reg:P RETURN_ADDR_REGNUM))
+	      (set (match_dup 0) (match_dup 3))])
+    (set (match_dup 0) (match_dup 4))]
+{
+  operands[3] = gen_rtx_HIGH (Pmode, operands[1]);
+  operands[4] = gen_rtx_LO_SUM (Pmode, operands[0], operands[2]);
 }
   [(set_attr "type" "ghost")])
 
