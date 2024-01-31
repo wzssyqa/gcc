@@ -1513,6 +1513,7 @@ FP_ASM_SPEC "\
 #undef CC1_SPEC
 #define CC1_SPEC "\
 %{G*} %{EB:-meb} %{EL:-mel} %{EB:%{EL:%emay not use both -EB and -EL}} \
+%{static-pie:-mstatic-pie} \
 %(subtarget_cc1_spec)"
 
 /* Preprocessor specs.  */

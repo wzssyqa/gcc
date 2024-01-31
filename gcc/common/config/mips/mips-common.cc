@@ -51,6 +51,10 @@ mips_handle_option (struct gcc_options *opts,
       opts->x_target_flags &= ~MASK_FLOAT64;
       return true;
 
+    case OPT_static_pie:
+      opts->x_TARGET_STATIC_PIE = 1;
+      return true;
+
     default:
       return true;
     }

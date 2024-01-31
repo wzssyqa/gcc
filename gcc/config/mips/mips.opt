@@ -389,6 +389,10 @@ mshared
 Target Var(TARGET_SHARED) Init(1)
 When generating -mabicalls code, make the code suitable for use in shared libraries.
 
+mstatic-pie
+Target Var(TARGET_STATIC_PIE) Init(0)
+When generating -mabicalls code, make the code static-pie.
+
 msingle-float
 Target RejectNegative Mask(SINGLE_FLOAT)
 Restrict the use of hardware floating-point instructions to 32-bit operations.

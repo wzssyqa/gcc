@@ -2200,8 +2200,7 @@ mips_classify_symbol (const_rtx x, enum mips_symbol_context context)
       /* */
       if (TARGET_PCREL_PIC)
 	{
-	  /* Used by kernel: all symbols are local.  */
-	  if (!TARGET_SHARED)
+	  if (TARGET_STATIC_PIE)
 	    return SYMBOL_PC_RELATIVE;
 	  else if (strcmp (XSTR (x, 0), "_gp_disp") == 0)
 	    return ABI_HAS_64BIT_SYMBOLS ? SYMBOL_64_LOW : SYMBOL_ABSOLUTE;
@@ -7495,6 +7494,7 @@ mips_load_call_address (enum mips_call_type type, rtx dest, rtx addr)
      of $gp on entry to the stub would be our caller's gp, not ours.  */
   if (TARGET_EXPLICIT_RELOCS
       && !(type == MIPS_CALL_SIBCALL && TARGET_CALL_SAVED_GP)
+      && !TARGET_STATIC_PIE
       && mips_ok_for_lazy_binding_p (addr))
     {
       addr = mips_got_load (dest, addr, SYMBOL_GOTOFF_CALL);
